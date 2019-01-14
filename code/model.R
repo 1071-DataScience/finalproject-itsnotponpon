@@ -1,4 +1,4 @@
-library('rpart')
+library('gbm3')
 library('argparser')
 
 parser <- arg_parser('Final Project on Duolingo SLAM dataset')
@@ -10,7 +10,7 @@ train_f <- argv$train
 test_f <- argv$test
 pred_f <- argv$pred
 if (pred_f == '') {
-  pred_f <- sub('test', 'pred', test_f)
+  pred_f <- paste0(test_f, '.pred')
 }
 
 # The dataset format is almost SSV, but not quite
@@ -24,7 +24,7 @@ load_data <- function(filename, is_train) {
   } else {
     colnames(df_part) <- c('uid', 'token', 'pos', 'morph', 'depLabel', 'depHead')
   }
-  # Filter out the exercise header
+  # Find the position of the exercise headers
   wh <- which(startsWith(raw_lines, '#'))
   # Count where they originally belong
   exercise_len <- vector(mode='integer', length=length(wh))
@@ -39,20 +39,15 @@ load_data <- function(filename, is_train) {
   l <- rep.int(l, exercise_len)
   # Fill in various variables, then return it
   # l[[1]] is '#', even numbers are feature names
-  ex_user      <- sapply(l, function(x) {x[[3]]}, simplify=T)
-  ex_countries <- sapply(l, function(x) {x[[5]]}, simplify=T)
-  ex_days      <- as.numeric(sapply(l, function(x) {x[[7]]}, simplify=T))
-  ex_client    <- as.factor(sapply(l, function(x) {x[[9]]}, simplify=T))
-  ex_session   <- as.factor(sapply(l, function(x) {x[[11]]}, simplify=T))
-  ex_format    <- as.factor(sapply(l, function(x) {x[[13]]}, simplify=T))
-  ex_time      <- as.numeric(sapply(l, function(x) {x[[15]]}, simplify=T))
-  exercises <- data.frame(user=ex_user,
-                          countries=ex_countries,
-                          days=ex_days,
-                          client=ex_client,
-                          session=ex_session,
-                          format=ex_format,
-                          time=ex_time)
+  ex           <- list()
+  ex$user      <- factor(sapply(l, function(x) {x[[3]]}, simplify=T))
+  ex$countries <- sapply(l, function(x) {x[[5]]}, simplify=T)
+  ex$days      <- as.numeric(sapply(l, function(x) {x[[7]]}, simplify=T))
+  ex$client    <- factor(sapply(l, function(x) {x[[9]]}, simplify=T))
+  ex$session   <- factor(sapply(l, function(x) {x[[11]]}, simplify=T))
+  ex$format    <- factor(sapply(l, function(x) {x[[13]]}, simplify=T))
+  ex$time      <- as.numeric(sapply(l, function(x) {x[[15]]}, simplify=T))
+  exercises <- as.data.frame(ex, stringsAsFactors=F)
 
   cbind(exercises, df_part)
 }
@@ -60,44 +55,48 @@ load_data <- function(filename, is_train) {
 train_d <- load_data(train_f, is_train=T)
 test_d <- load_data(test_f, is_train=F)
 
-# 'Fixing' features, including:
-# * filter out less than 1 day of usage
+# 'Cleaning' features, including:
+# * filter out less than 1 day of usage (user needs to familiarize the app)
 # * Lowercase tokens
 # * Split exercise and token indices
 # * Replacing negative and `NA` time with zero (not the best, better guess them)
 train_d <- train_d[train_d$days > 1,]
 train_d$token <- factor(tolower(train_d$token))
-train_d$exerciseId <- factor(sapply(train_d$uid, function(x) {substr(x, 1, 8)}))
-train_d$exerciseIndex <- as.numeric(sapply(train_d$uid, function(x) {substr(x, 9, 10)}))
-train_d$tokenIndex <- as.numeric(sapply(train_d$uid, function(x) {substr(x, 11, 12)}))
-train_d$time[train_d$time < 0] <- 0
-train_d$time[is.na(train_d$time)] <- 0
-# train_d$countries <- factor(sapply(strsplit(train_d$countries, split='|', fixed=T), function(x) {x[1]}, simplify=T))
+train_d$exerciseId <- factor(substr(train_d$uid, 1, 8))
+train_d$exerciseIndex <- as.numeric(substr(train_d$uid, 9, 10))
+train_d$tokenIndex <- as.numeric(substr(train_d$uid, 11, 12))
+train_d$time[is.na(train_d$time)] <- median(train_d$time, na.rm=T)
+train_d$time[train_d$time < 0] <- median(train_d$time)
+train_d$countries <- factor(sapply(strsplit(train_d$countries, split='|', fixed=T), function(x) {x[1]}, simplify=T))
 
 test_d$token <- factor(tolower(test_d$token))
-test_d$exerciseId <- factor(sapply(test_d$uid, function(x) {substr(x, 1, 8)}))
-test_d$exerciseIndex <- as.numeric(sapply(test_d$uid, function(x) {substr(x, 9, 10)}))
-test_d$tokenIndex <- as.numeric(sapply(test_d$uid, function(x) {substr(x, 11, 12)}))
-test_d$time[test_d$time < 0] <- 0
-test_d$time[is.na(test_d$time)] <- 0
-# test_d$countries <- factor(sapply(strsplit(test_d$countries, split='|', fixed=T), function(x) {x[1]}, simplify=T))
+test_d$exerciseId <- factor(substr(test_d$uid, 1, 8))
+test_d$exerciseIndex <- as.numeric(substr(test_d$uid, 9, 10))
+test_d$tokenIndex <- as.numeric(substr(test_d$uid, 11, 12))
+test_d$time[is.na(test_d$time)] <- median(test_d$time, na.rm=T)
+test_d$time[test_d$time < 0] <- median(test_d$time)
+test_d$countries <- factor(sapply(strsplit(test_d$countries, split='|', fixed=T), function(x) {x[1]}, simplify=T))
 
-# rpart model (currently unused)
-# rp_control <- rpart.control(minsplit=10L, xval=10)
-# rp_model <- rpart(label ~ pos + depHead + depLabel + days +
-#                   countries + session + format + time,
-#                   data=train_d,
-#                   control=rp_control)
-
-glm_model <- glm(label ~ pos + depHead + depLabel + days +
-                 session + format + time +
-                tokenIndex + exerciseIndex,
+# train_params <- training_params(num_trees=6400,
+#                                 interaction_depth=3,
+#                                 shrinkage=0.001)
+# gbmt_model <- gbmt(label ~ depLabel +
+#                 days + time +
+#                 tokenIndex + exerciseIndex,
+#                 distribution=gbm_dist('Bernoulli'),
+#                 data=train_d,
+#                 train_params=train_params,
+#                 cv_folds=25,
+#                 is_verbose=F)
+glm_model <- glm(label ~ depLabel + client *
+                session * format + days * time +
+                tokenIndex * exerciseIndex,
                 data=train_d,
                 family=binomial())
-
-# print(summary(glm_model))
-
+# best_iter <- gbmt_performance(gbmt_model, method='cv')
+# print(best_iter)
+# print(summary(gbmt_model, num_trees=best_iter))
+print(summary(glm_model))
 prediction <- predict(glm_model, test_d, type='response')
-# prediction[is.na(prediction)] <- 0.0001
 out_d <- data.frame(uid=test_d$uid, pred=prediction)
 write.table(out_d, pred_f, quote=F, col.names=F, row.names=F)
