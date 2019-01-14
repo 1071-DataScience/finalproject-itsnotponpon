@@ -1,4 +1,5 @@
-library('gbm3')
+library('ROCR')
+library('ggplot2')
 library('argparser')
 
 parser <- arg_parser('Final Project on Duolingo SLAM dataset')
@@ -57,11 +58,14 @@ test_d <- load_data(test_f, is_train=F)
 
 # 'Cleaning' features, including:
 # * filter out less than 1 day of usage (user needs to familiarize the app)
-# * Lowercase tokens
+# * Extract word length and Morphological complexity
+# * Lowercase tokens, and then factorize them
 # * Split exercise and token indices
-# * Replacing negative and `NA` time with zero (not the best, better guess them)
+# * Replace negative and `NA` time with the median (not the best way)
 train_d <- train_d[train_d$days > 1,]
+train_d$tokenLen <- nchar(train_d$token)
 train_d$token <- factor(tolower(train_d$token))
+train_d$morphComplex <- sapply(strsplit(train_d$morph, split='|', fixed=T), length)
 train_d$exerciseId <- factor(substr(train_d$uid, 1, 8))
 train_d$exerciseIndex <- as.numeric(substr(train_d$uid, 9, 10))
 train_d$tokenIndex <- as.numeric(substr(train_d$uid, 11, 12))
@@ -69,7 +73,9 @@ train_d$time[is.na(train_d$time)] <- median(train_d$time, na.rm=T)
 train_d$time[train_d$time < 0] <- median(train_d$time)
 train_d$countries <- factor(sapply(strsplit(train_d$countries, split='|', fixed=T), function(x) {x[1]}, simplify=T))
 
+test_d$tokenLen <- nchar(test_d$token)
 test_d$token <- factor(tolower(test_d$token))
+test_d$morphComplex <- sapply(strsplit(test_d$morph, split='|', fixed=T), length)
 test_d$exerciseId <- factor(substr(test_d$uid, 1, 8))
 test_d$exerciseIndex <- as.numeric(substr(test_d$uid, 9, 10))
 test_d$tokenIndex <- as.numeric(substr(test_d$uid, 11, 12))
@@ -77,6 +83,7 @@ test_d$time[is.na(test_d$time)] <- median(test_d$time, na.rm=T)
 test_d$time[test_d$time < 0] <- median(test_d$time)
 test_d$countries <- factor(sapply(strsplit(test_d$countries, split='|', fixed=T), function(x) {x[1]}, simplify=T))
 
+# Unused GBDT model
 # train_params <- training_params(num_trees=6400,
 #                                 interaction_depth=3,
 #                                 shrinkage=0.001)
@@ -88,15 +95,26 @@ test_d$countries <- factor(sapply(strsplit(test_d$countries, split='|', fixed=T)
 #                 train_params=train_params,
 #                 cv_folds=25,
 #                 is_verbose=F)
-glm_model <- glm(label ~ depLabel + client *
-                session * format + days * time +
+
+glm_model <- glm(label ~ tokenLen * morphComplex + pos + depLabel +
+                client * session * format + days * time *
                 tokenIndex * exerciseIndex,
                 data=train_d,
-                family=binomial())
+                family=binomial(),
+                control=glm.control(maxit=100))
+
+# More unused GBDT model
 # best_iter <- gbmt_performance(gbmt_model, method='cv')
 # print(best_iter)
 # print(summary(gbmt_model, num_trees=best_iter))
-print(summary(glm_model))
-prediction <- predict(glm_model, test_d, type='response')
-out_d <- data.frame(uid=test_d$uid, pred=prediction)
+# print(summary(glm_model))
+
+glm_prediction <- predict(glm_model, test_d, type='response')
+key <- read.table('data/fr_en.slam.20171218.test.key')
+eval <- prediction(glm_prediction, key[2])
+plot(performance(eval,"tpr","fpr"))
+print(attributes(performance(eval,'auc'))$y.values[[1]])
+forplot <- data.frame(pred=glm_prediction, actual=factor(key$V2))
+ggplot(data=forplot) + geom_density(aes(x=pred, color=actual))
+out_d <- data.frame(uid=test_d$uid, pred=glm_prediction)
 write.table(out_d, pred_f, quote=F, col.names=F, row.names=F)
