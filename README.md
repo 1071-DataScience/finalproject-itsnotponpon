@@ -1,9 +1,8 @@
 # Modeling Second Language Acquisition
 
 ### Groups
-* < name, student ID1 >
-* < name, student ID2 >
-* < name, student ID3 >
+* 彭賢訓，107753030
+* 陳研佑，107753021
 
 ### Goal
 When learning a second lenguage, it is helpful knowing where a student is likely to make a mistake. We aim to predict the mistakes from translating practices, from the sentences to translate with student and practice metadata.
@@ -14,7 +13,7 @@ Run the model, if `pred` is not given then will be `test` with suffix `.pred`:
 Rscript code/model.R --train data/fr_en.slam.20171218.train --test data/fr_en.slam.20171218.test --pred results/pred
 ```
 
-Simple evaluation with Python:
+Simple evaluation with Python, code from Duolingo:
 ```py
 python3 code/eval.py --pred results/pred  --key data/fr_en.slam.20171218.test.key
 ```
@@ -53,20 +52,26 @@ We primarily preprocess the dataset in the following ways:
 
 We use logistic regression on the following features:
 ```
-tokenLen
-morphComplex
-pos
-depLabel
+word length (tokenLen)
+morphlogical complexity (morphComplex)
+part of speech (pos)
+dependency label (depLabel)
 user
 session
 format
 days
 time
-tokenIndex
-exerciseIndex
+token index
+exercise index
 ```
 Some of which (e.g. token length, exercise index) is derived from the dataset. The model is simply built by the `glm` call.
 
 ### results
 
-The shared task orgnizers provide a script for evaluating the predictive performance with AUC and F1 scores, we additionally plot the ROC curve and double density.
+The shared task organizers provide a script for evaluating the predictive performance with AUC and F1 scores, we additionally make the ROC curve and double density plot.
+
+Our model's score:
+```
+Metrics:	accuracy=0.822	avglogloss=0.436	auroc=0.684	F1=0.028
+```
+Unfortunately, the metrics is worse than the baseline model provided by the shared task organizers, which reports AUC of 0.771.
